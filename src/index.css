@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+html { scroll-behavior: smooth; }
+body { overflow-x: hidden; }
+
+/* Better base smoothing */
+* { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
