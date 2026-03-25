@@ -1,372 +1,161 @@
-import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { motion } from "framer-motion";
 
-/**
- * Build a text mask and generate "wall chunks":
- * - grid of chunk centers (clean breakpoints)
- * - keep only centers inside text
- * - approximate distance-to-edge to keep outlines crisp/readable
- */
-function buildWallChunks({
+const easeOut = [0.16, 1, 0.3, 1];
+
+function FracturedWord({
   text,
-  font,
-  canvasW = 2600,
-  canvasH = 1000,
-  cell = 12,
-  pad = 8,
-  threshold = 18,
-  maxChunks = 2600,
+  boxX,
+  boxY,
+  boxW,
+  boxH,
+  fontSize,
+  fontWeight,
+  pieces,
+  tint = "#e8efff",
+  hoverEnabled = true,
+  letterSpacing = "0em",
 }) {
-  const c = document.createElement("canvas");
-  c.width = canvasW;
-  c.height = canvasH;
-  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const [hovered, setHovered] = useState(false);
+  const uid = useId().replace(/:/g, "");
 
-  ctx.clearRect(0, 0, canvasW, canvasH);
-  ctx.fillStyle = "#fff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.font = font;
-  ctx.fillText(text, canvasW / 2, canvasH / 2);
+  const maskId = `mask-${uid}`;
+  const fillId = `fill-${uid}`;
+  const sheenId = `sheen-${uid}`;
+  const glowId = `glow-${uid}`;
 
-  const img = ctx.getImageData(0, 0, canvasW, canvasH).data;
+  return (
+    <g
+      transform={`translate(${boxX} ${boxY})`}
+      onMouseEnter={() => hoverEnabled && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ pointerEvents: "auto" }}
+    >
+      <defs>
+        <linearGradient id={fillId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.96" />
+          <stop offset="38%" stopColor={tint} stopOpacity="0.92" />
+          <stop offset="100%" stopColor="#b9c9f0" stopOpacity="0.78" />
+        </linearGradient>
 
-  const isOn = (x, y) => {
-    if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) return false;
-    const i = (y * canvasW + x) * 4;
-    return img[i] > threshold;
-  };
+        <linearGradient id={sheenId} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.55" />
+          <stop offset="28%" stopColor="#ffffff" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.02" />
+        </linearGradient>
 
-  const edgeDist = (x, y) => {
-    const rays = [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-      [1, 1],
-      [-1, 1],
-      [1, -1],
-      [-1, -1],
-    ];
-    let best = 9999;
-    for (const [dx, dy] of rays) {
-      let d = 0;
-      while (d < 120) {
-        const xx = x + dx * d;
-        const yy = y + dy * d;
-        if (!isOn(xx, yy)) break;
-        d += 2;
-      }
-      if (d < best) best = d;
-    }
-    return best;
-  };
+        <filter id={glowId} x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feColorMatrix
+            in="blur"
+            type="matrix"
+            values="
+              1 0 0 0 0
+              0 1 0 0 0
+              0 0 1 0 0
+              0 0 0 0.2 0
+            "
+          />
+        </filter>
 
-  const pts = [];
-  for (let y = pad; y < canvasH - pad; y += cell) {
-    for (let x = pad; x < canvasW - pad; x += cell) {
-      if (!isOn(x, y)) continue;
-      const nx = (x / canvasW - 0.5) * 2;
-      const ny = (0.5 - y / canvasH) * 2;
-      const ed = edgeDist(x, y);
-      pts.push({ nx, ny, ed });
-    }
-  }
+        <mask id={maskId} maskUnits="userSpaceOnUse">
+          <rect width={boxW} height={boxH} fill="black" />
+          <text
+            x={boxW / 2}
+            y={boxH / 2}
+            fill="white"
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fontSize={fontSize}
+            fontWeight={fontWeight}
+            letterSpacing={letterSpacing}
+            fontFamily="Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
+          >
+            {text}
+          </text>
+        </mask>
+      </defs>
 
-  // Keep a mix: interior + edge to preserve readability
-  pts.sort((a, b) => b.ed - a.ed);
-  const keep = [];
-  const takeDeep = Math.floor(maxChunks * 0.72);
-  const takeEdge = maxChunks - takeDeep;
+      <g filter={`url(#${glowId})`} mask={`url(#${maskId})`}>
+        <rect x="0" y="0" width={boxW} height={boxH} fill={tint} opacity="0.08" />
+      </g>
 
-  for (let i = 0; i < Math.min(takeDeep, pts.length); i++) keep.push(pts[i]);
+      <g mask={`url(#${maskId})`}>
+        {pieces.map((piece, i) => (
+          <motion.g
+            key={i}
+            initial={{
+              x: piece.fromX,
+              y: piece.fromY,
+              rotate: piece.fromR,
+              opacity: 0,
+              scale: 0.97,
+            }}
+            animate={{
+              x: hovered ? piece.hoverX : 0,
+              y: hovered ? piece.hoverY : 0,
+              rotate: hovered ? piece.hoverR : 0,
+              opacity: 1,
+              scale: 1,
+            }}
+            transition={{
+              opacity: { duration: 0.55, delay: piece.delay },
+              scale: { duration: 1.5, delay: piece.delay, ease: easeOut },
+              x: {
+                duration: hovered ? 0.55 : 1.75,
+                delay: hovered ? 0 : piece.delay,
+                ease: easeOut,
+              },
+              y: {
+                duration: hovered ? 0.55 : 1.75,
+                delay: hovered ? 0 : piece.delay,
+                ease: easeOut,
+              },
+              rotate: {
+                duration: hovered ? 0.55 : 1.75,
+                delay: hovered ? 0 : piece.delay,
+                ease: easeOut,
+              },
+            }}
+            style={{
+              transformBox: "fill-box",
+              transformOrigin: "50% 50%",
+            }}
+          >
+            <polygon
+              points={piece.points}
+              fill={`url(#${fillId})`}
+              stroke="white"
+              strokeOpacity="0.17"
+              strokeWidth="1.15"
+            />
+            <polygon
+              points={piece.points}
+              fill={`url(#${sheenId})`}
+              opacity="0.5"
+            />
+          </motion.g>
+        ))}
 
-  const edges = [...pts].sort((a, b) => a.ed - b.ed);
-  for (let i = 0; i < Math.min(takeEdge, edges.length); i++) keep.push(edges[i]);
-
-  return keep;
-}
-
-function smoothstep(a, b, x) {
-  const t = THREE.MathUtils.clamp((x - a) / (b - a), 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
-function ShardWall({
-  text,
-  font,
-  maxChunks,
-  materialType,
-  offsetX,
-  offsetY,
-  scaleX,
-  scaleY,
-  cursorForce = 6.0,
-  cursorRadiusFactor = 0.22,
-  cell = 12,
-  // intro timing
-  introDuration = 2.2, // swirl length
-  settleDuration = 0.8, // extra settle after swirl
-}) {
-  const instRef = useRef();
-  const { viewport, size: screen } = useThree();
-  const cursor = useRef({ x: 0, y: 0 });
-
-  // start time (per component)
-  const startTimeRef = useRef(null);
-
-  useEffect(() => {
-    const onMove = (e) => {
-      cursor.current.x = (e.clientX / screen.width) * 2 - 1;
-      cursor.current.y = -((e.clientY / screen.height) * 2 - 1);
-    };
-    window.addEventListener("pointermove", onMove, { passive: true });
-    return () => window.removeEventListener("pointermove", onMove);
-  }, [screen.width, screen.height]);
-
-  const chunks = useMemo(() => {
-    return buildWallChunks({
-      text,
-      font,
-      cell,
-      maxChunks,
-      threshold: 18,
-    });
-  }, [text, font, maxChunks, cell]);
-
-  const count = chunks.length;
-
-  const targets = useMemo(() => {
-    return chunks.map((p) => {
-      const x = p.nx * viewport.width * scaleX + offsetX;
-      const y = p.ny * viewport.height * scaleY + offsetY;
-      return new THREE.Vector3(x, y, 0);
-    });
-  }, [chunks, viewport.width, viewport.height, scaleX, scaleY, offsetX, offsetY]);
-
-  // Per-instance state
-  const state = useMemo(() => {
-    const pos = [];
-    const vel = [];
-    const rot = [];
-    const rotVel = [];
-    const sca = [];
-
-    // Swirl params per chunk (stable + looks intentional)
-    const swirlPhase = new Float32Array(count);
-    const swirlSpeed = new Float32Array(count);
-    const swirlRadius = new Float32Array(count);
-    const swirlZ = new Float32Array(count);
-
-    for (let i = 0; i < count; i++) {
-      const t = targets[i];
-
-      // Spawn offscreen in a “ring” around the whole logo area
-      const ang = Math.random() * Math.PI * 2;
-      const rad =
-        Math.max(viewport.width, viewport.height) *
-        (0.85 + Math.random() * 0.55); // offscreen
-      const spawn = new THREE.Vector3(
-        Math.cos(ang) * rad,
-        Math.sin(ang) * rad,
-        (Math.random() - 0.5) * 1.2
-      );
-
-      pos.push(spawn);
-
-      // Initial inward velocity (so it doesn't sit there)
-      const toward = new THREE.Vector3().subVectors(t, spawn).normalize();
-      vel.push(toward.multiplyScalar(0.15 + Math.random() * 0.20));
-
-      rot.push(
-        new THREE.Euler(
-          (Math.random() - 0.5) * 0.8,
-          (Math.random() - 0.5) * 0.8,
-          (Math.random() - 0.5) * 0.8
-        )
-      );
-      rotVel.push(
-        new THREE.Vector3(
-          (Math.random() - 0.5) * 0.9,
-          (Math.random() - 0.5) * 0.9,
-          (Math.random() - 0.5) * 0.9
-        )
-      );
-
-      // Tiny chunks => readable text
-      const ed = chunks[i].ed;
-      const edgeFactor = THREE.MathUtils.clamp(ed / 28, 0.25, 1.0);
-      const base = materialType === "stone" ? 0.036 : 0.030;
-
-      const sx = base * (0.55 + 0.9 * edgeFactor);
-      const sy = base * (0.45 + 0.8 * edgeFactor);
-      const sz = base * (0.40 + 0.7 * edgeFactor);
-      sca.push(new THREE.Vector3(sx * 1.2, sy, sz * 0.7));
-
-      // Swirl tuning (bigger for stone, tighter for steel)
-      swirlPhase[i] = Math.random() * Math.PI * 2;
-      swirlSpeed[i] = (0.9 + Math.random() * 0.9) * (materialType === "stone" ? 1.0 : 1.15);
-      swirlRadius[i] = (0.18 + Math.random() * 0.28) * (materialType === "stone" ? 1.0 : 0.9);
-      swirlZ[i] = (Math.random() - 0.5) * 0.18;
-    }
-
-    return { pos, vel, rot, rotVel, sca, swirlPhase, swirlSpeed, swirlRadius, swirlZ };
-  }, [count, targets, viewport.width, viewport.height, chunks, materialType]);
-
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-
-  const bounds = useMemo(() => {
-    return {
-      x: viewport.width * 0.62,
-      y: viewport.height * 0.42,
-      z: 0.95,
-    };
-  }, [viewport.width, viewport.height]);
-
-  const geom = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
-
-  const mat = useMemo(() => {
-    if (materialType === "stone") {
-      return new THREE.MeshStandardMaterial({
-        color: new THREE.Color("#9aa0a6"),
-        roughness: 0.98,
-        metalness: 0.04,
-      });
-    }
-    // brighter, readable steel
-    return new THREE.MeshStandardMaterial({
-      color: new THREE.Color("#eef3f8"),
-      roughness: 0.18,
-      metalness: 0.45,
-      envMapIntensity: 1.2,
-    });
-  }, [materialType]);
-
-  useFrame((renderState, dt) => {
-    const m = instRef.current;
-    if (!m) return;
-
-    if (startTimeRef.current === null) startTimeRef.current = renderState.clock.elapsedTime;
-    const tNow = renderState.clock.elapsedTime;
-    const t0 = startTimeRef.current;
-    const tElapsed = tNow - t0;
-
-    // 0..1 swirl progress, then 0..1 settle progress
-    const swirlProg = THREE.MathUtils.clamp(tElapsed / introDuration, 0, 1);
-    const settleProg = THREE.MathUtils.clamp((tElapsed - introDuration) / settleDuration, 0, 1);
-
-    // ease curves
-    const swirlEase = smoothstep(0, 1, swirlProg); // ramps in
-    const settleEase = smoothstep(0, 1, settleProg); // ramps out
-
-    // During swirl: we "drive" chunks around their targets.
-    // After swirl: we fully switch to spring assemble + cursor crumble.
-    const inSwirl = swirlProg < 1;
-
-    // Assemble physics
-    const spring = inSwirl ? 9.0 : 18.0;
-    const damping = inSwirl ? 4.8 : 9.5;
-
-    const cx = cursor.current.x * viewport.width * 0.5;
-    const cy = cursor.current.y * viewport.height * 0.5;
-    const cursorRadius = Math.min(viewport.width, viewport.height) * cursorRadiusFactor;
-
-    for (let i = 0; i < count; i++) {
-      const p = state.pos[i];
-      const v = state.vel[i];
-      const target = targets[i];
-
-      if (inSwirl) {
-        // Swirl path around target: large radius at start -> tight spiral -> target
-        const phase = state.swirlPhase[i];
-        const speed = state.swirlSpeed[i];
-        const baseR = state.swirlRadius[i];
-
-        // start wide, end tight
-        const R = THREE.MathUtils.lerp(
-          Math.max(viewport.width, viewport.height) * 0.55,
-          baseR * Math.min(viewport.width, viewport.height),
-          swirlEase
-        );
-
-        const ang = phase + tElapsed * speed * 2.2;
-
-        // swirl center is the final target (so letters remain readable early)
-        const swirlTarget = new THREE.Vector3(
-          target.x + Math.cos(ang) * R,
-          target.y + Math.sin(ang) * R * 0.72,
-          target.z + state.swirlZ[i]
-        );
-
-        // Drive towards swirlTarget (not exploding)
-        v.x += (swirlTarget.x - p.x) * spring * dt;
-        v.y += (swirlTarget.y - p.y) * spring * dt;
-        v.z += (swirlTarget.z - p.z) * spring * dt;
-
-        // Gentle rotational chaos early, then damp
-        const rv = state.rotVel[i];
-        const rotDamp = THREE.MathUtils.lerp(0.6, 3.2, swirlEase);
-        rv.multiplyScalar(1 - rotDamp * dt);
-        state.rot[i].x += rv.x * dt;
-        state.rot[i].y += rv.y * dt;
-        state.rot[i].z += rv.z * dt;
-      } else {
-        // Normal assemble
-        v.x += (target.x - p.x) * spring * dt;
-        v.y += (target.y - p.y) * spring * dt;
-        v.z += (target.z - p.z) * spring * dt;
-
-        // Cursor crumble (protected near edges for crisp letters)
-        const dx = p.x - cx;
-        const dy = p.y - cy;
-        const d = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-        const k = Math.max(0, 1 - d / cursorRadius);
-
-        const ed = chunks[i].ed;
-        const edgeProtection = THREE.MathUtils.clamp(ed / 26, 0.20, 1.0);
-
-        const push = cursorForce * (k * k) * edgeProtection;
-
-        v.x += (dx / d) * push * dt;
-        v.y += (dy / d) * push * dt;
-        v.z += push * 0.10 * dt;
-
-        // Rotation settles heavily post-intro
-        const rv = state.rotVel[i];
-        rv.multiplyScalar(1 - 3.2 * dt);
-        state.rot[i].x += rv.x * dt;
-        state.rot[i].y += rv.y * dt;
-        state.rot[i].z += rv.z * dt;
-      }
-
-      // Damping + integrate
-      v.multiplyScalar(1 - damping * dt);
-      p.addScaledVector(v, 1);
-
-      // Extra post-swirl settle “snap” (tightens readability)
-      if (!inSwirl && settleProg < 1) {
-        // blend to target a bit while settling
-        const s = 0.14 * (1 - settleEase);
-        p.lerp(target, s);
-      }
-
-      // Clamp so it never goes offscreen
-      p.x = THREE.MathUtils.clamp(p.x, -bounds.x, bounds.x);
-      p.y = THREE.MathUtils.clamp(p.y, -bounds.y, bounds.y);
-      p.z = THREE.MathUtils.clamp(p.z, -bounds.z, bounds.z);
-
-      dummy.position.copy(p);
-      dummy.rotation.copy(state.rot[i]);
-      dummy.scale.copy(state.sca[i]);
-      dummy.updateMatrix();
-      m.setMatrixAt(i, dummy.matrix);
-    }
-
-    m.instanceMatrix.needsUpdate = true;
-  });
-
-  return <instancedMesh ref={instRef} args={[geom, mat, count]} />;
+        <text
+          x={boxW / 2}
+          y={boxH / 2}
+          fill="none"
+          stroke="white"
+          strokeOpacity="0.08"
+          strokeWidth="2"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={fontSize}
+          fontWeight={fontWeight}
+          letterSpacing={letterSpacing}
+          fontFamily="Inter, system-ui, -apple-system, Segoe UI, Arial, sans-serif"
+        >
+          {text}
+        </text>
+      </g>
+    </g>
+  );
 }
 
 export default function LogoAssembler() {
@@ -376,58 +165,231 @@ export default function LogoAssembler() {
     setIsTouch(window.matchMedia("(hover: none)").matches);
   }, []);
 
+  const pmPieces = [
+    {
+      points: "0,0 250,0 182,112 0,146",
+      fromX: -160,
+      fromY: -60,
+      fromR: -14,
+      hoverX: -26,
+      hoverY: -10,
+      hoverR: -4,
+      delay: 0.02,
+    },
+    {
+      points: "0,146 182,112 208,280 0,280",
+      fromX: -150,
+      fromY: 74,
+      fromR: 10,
+      hoverX: -20,
+      hoverY: 14,
+      hoverR: 3,
+      delay: 0.1,
+    },
+    {
+      points: "250,0 356,0 304,132 182,112",
+      fromX: -38,
+      fromY: -128,
+      fromR: 9,
+      hoverX: -8,
+      hoverY: -12,
+      hoverR: 2,
+      delay: 0.16,
+    },
+    {
+      points: "182,112 304,132 294,280 208,280",
+      fromX: -24,
+      fromY: 116,
+      fromR: -8,
+      hoverX: -6,
+      hoverY: 12,
+      hoverR: -2,
+      delay: 0.24,
+    },
+    {
+      points: "356,0 540,0 472,120 304,132",
+      fromX: 136,
+      fromY: -78,
+      fromR: 15,
+      hoverX: 22,
+      hoverY: -10,
+      hoverR: 4,
+      delay: 0.32,
+    },
+    {
+      points: "304,132 472,120 540,280 294,280",
+      fromX: 146,
+      fromY: 84,
+      fromR: -10,
+      hoverX: 18,
+      hoverY: 14,
+      hoverR: -3,
+      delay: 0.4,
+    },
+  ];
+
+  const solutionsPieces = [
+    {
+      points: "0,0 168,0 126,82 0,112",
+      fromX: -120,
+      fromY: -44,
+      fromR: -8,
+      hoverX: -16,
+      hoverY: -6,
+      hoverR: -2,
+      delay: 0.08,
+    },
+    {
+      points: "0,112 126,82 192,190 0,190",
+      fromX: -118,
+      fromY: 42,
+      fromR: 7,
+      hoverX: -14,
+      hoverY: 10,
+      hoverR: 2,
+      delay: 0.14,
+    },
+    {
+      points: "168,0 362,0 300,78 126,82",
+      fromX: -52,
+      fromY: -58,
+      fromR: 6,
+      hoverX: -8,
+      hoverY: -8,
+      hoverR: 2,
+      delay: 0.2,
+    },
+    {
+      points: "126,82 300,78 370,190 192,190",
+      fromX: -42,
+      fromY: 50,
+      fromR: -6,
+      hoverX: -6,
+      hoverY: 9,
+      hoverR: -2,
+      delay: 0.26,
+    },
+    {
+      points: "362,0 598,0 520,98 300,78",
+      fromX: 0,
+      fromY: -68,
+      fromR: 7,
+      hoverX: 0,
+      hoverY: -8,
+      hoverR: 2,
+      delay: 0.32,
+    },
+    {
+      points: "300,78 520,98 620,190 370,190",
+      fromX: 0,
+      fromY: 56,
+      fromR: -6,
+      hoverX: 0,
+      hoverY: 9,
+      hoverR: -2,
+      delay: 0.38,
+    },
+    {
+      points: "598,0 790,0 728,82 520,98",
+      fromX: 58,
+      fromY: -54,
+      fromR: 7,
+      hoverX: 8,
+      hoverY: -8,
+      hoverR: 2,
+      delay: 0.44,
+    },
+    {
+      points: "520,98 728,82 826,190 620,190",
+      fromX: 56,
+      fromY: 48,
+      fromR: -6,
+      hoverX: 6,
+      hoverY: 8,
+      hoverR: -2,
+      delay: 0.5,
+    },
+    {
+      points: "790,0 980,0 980,96 728,82",
+      fromX: 124,
+      fromY: -40,
+      fromR: 8,
+      hoverX: 16,
+      hoverY: -6,
+      hoverR: 2,
+      delay: 0.56,
+    },
+    {
+      points: "728,82 980,96 980,190 826,190",
+      fromX: 122,
+      fromY: 42,
+      fromR: -7,
+      hoverX: 14,
+      hoverY: 8,
+      hoverR: -2,
+      delay: 0.62,
+    },
+  ];
+
   return (
-    <div className="relative h-[100svh] w-full overflow-hidden">
-      <Canvas
-        camera={{ position: [0, 0, 2.45], fov: 55 }}
-        dpr={[1.2, 2.5]}
-        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
+    <div className="absolute inset-0">
+      <svg
+        viewBox="0 0 1600 900"
+        className="h-full w-full"
+        preserveAspectRatio="xMidYMid meet"
       >
-        <ambientLight intensity={0.18} />
-        <directionalLight position={[2.5, 2.0, 2]} intensity={1.25} />
-        <directionalLight position={[-2.0, -1.0, 2]} intensity={0.70} />
-        <pointLight position={[0, 0.6, 1.6]} intensity={0.35} />
+        <defs>
+          <radialGradient id="bgGlowTop" cx="50%" cy="24%" r="58%">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.16)" />
+            <stop offset="55%" stopColor="rgba(125,145,255,0.08)" />
+            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+          </radialGradient>
 
-        {/* PM (STONE) */}
-        <ShardWall
-          text="PM"
-          font="900 260px system-ui, -apple-system, Segoe UI, Inter, Arial"
-          maxChunks={2000}
-          cell={12}
-          materialType="stone"
-          offsetX={-0.60}
-          offsetY={0.03}
-          scaleX={0.40}
-          scaleY={0.22}
-          cursorForce={isTouch ? 0 : 6.0}
-          cursorRadiusFactor={0.22}
-          introDuration={2.4}
-          settleDuration={0.9}
-        />
+          <linearGradient id="bgFade" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="rgba(5,7,11,0)" />
+            <stop offset="100%" stopColor="rgba(5,7,11,0.96)" />
+          </linearGradient>
+        </defs>
 
-        {/* SOLUTIONS (STEEL) */}
-        <ShardWall
-          text="SOLUTIONS"
-          font="800 170px system-ui, -apple-system, Segoe UI, Inter, Arial"
-          maxChunks={2600}
-          cell={12}
-          materialType="steel"
-          offsetX={0.50}
-          offsetY={-0.05}
-          scaleX={0.46}
-          scaleY={0.18}
-          cursorForce={isTouch ? 0 : 5.0}
-          cursorRadiusFactor={0.22}
-          introDuration={2.4}
-          settleDuration={0.9}
-        />
-      </Canvas>
+        <rect width="1600" height="900" fill="#05070b" />
+        <rect width="1600" height="900" fill="url(#bgGlowTop)" />
+        <rect width="1600" height="900" fill="url(#bgFade)" />
 
-      {/* cinematic overlays */}
+        {/* Entire logo group centered */}
+        <g transform="translate(72 310)">
+          <FracturedWord
+            text="PM"
+            boxX={0}
+            boxY={0}
+            boxW={540}
+            boxH={280}
+            fontSize={252}
+            fontWeight={900}
+            pieces={pmPieces}
+            tint="#eef3ff"
+            hoverEnabled={!isTouch}
+          />
+
+          <FracturedWord
+            text="SOLUTIONS"
+            boxX={470}
+            boxY={38}
+            boxW={980}
+            boxH={190}
+            fontSize={164}
+            fontWeight={800}
+            pieces={solutionsPieces}
+            tint="#dfe8ff"
+            hoverEnabled={!isTouch}
+            letterSpacing="0.01em"
+          />
+        </g>
+      </svg>
+
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.12),transparent_55%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_60%_35%,rgba(120,119,198,0.12),transparent_60%)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(7,8,12,0.0),rgba(7,8,12,1))]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.10),transparent_54%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_58%_35%,rgba(120,140,255,0.10),transparent_58%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(5,7,11,0.0),rgba(5,7,11,0.96))]" />
       </div>
     </div>
   );
